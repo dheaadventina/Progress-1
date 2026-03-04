@@ -1,0 +1,239 @@
+---
+title: "DHEA BARU"
+author: "Dhea Adventina Sandy"
+date: "2026-03-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(outliers)
+library(ggplot2)
+library(dplyr)
+library(csv)
+
+
+df <- read.csv(
+  "C:/Users/ACER/Downloads/ovarian_cancer_CA125_dataset.csv",
+  sep = ";"
+)
+
+data <- df[c("CA125_U_per_mL", "Overall_Survival_Months")]
+
+total_missing <- sum(is.na(data))
+total_missing
+
+detect_outliers <- function(data) {
+  cat("\n=== DETEKSI OUTLIER ===\n\n")
+  
+  outlier_report <- list()
+  
+  for(var in names(data)[sapply(data, is.numeric)]) {
+    cat("Analisis outlier untuk variabel:", var, "\n")
+    
+    # Statistik deskriptif
+    stats <- summary(data[[var]])
+    iqr_val <- IQR(data[[var]], na.rm = TRUE)
+    q1 <- quantile(data[[var]], 0.25, na.rm = TRUE)
+    q3 <- quantile(data[[var]], 0.75, na.rm = TRUE)
+    lower_bound <- q1 - 1.5 * iqr_val
+    upper_bound <- q3 + 1.5 * iqr_val
+    
+    # Deteksi outlier dengan metode IQR
+    outliers_iqr <- data[[var]][data[[var]] < lower_bound | data[[var]] > upper_bound]
+    
+    # Deteksi outlier dengan metode Z-score
+    z_scores <- scale(data[[var]])
+    outliers_z <- data[[var]][abs(z_scores) > 3]
+    
+    # Deteksi outlier dengan metode Grubbs (uji statistik)
+    if(length(na.omit(data[[var]])) > 6) {
+      tryCatch({
+        grubbs_test <- grubbs.test(na.omit(data[[var]]))
+        grubbs_outlier <- ifelse(grubbs_test$p.value < 0.05, "Terdeteksi", "Tidak terdeteksi")
+      }, error = function(e) {
+        grubbs_outlier <- "Tidak dapat dihitung"
+      })
+    } else {
+      grubbs_outlier <- "Data tidak cukup"
+    }
+    
+    # Ringkasan
+    outlier_report[[var]] <- list(
+      n_outliers_iqr = length(outliers_iqr),
+      n_outliers_z = length(outliers_z),
+      grubbs_result = grubbs_outlier,
+      lower_bound = lower_bound,
+      upper_bound = upper_bound,
+      outlier_values = unique(round(outliers_iqr, 2))
+    )
+    
+    cat("  - Outlier (IQR method):", length(outliers_iqr), "\n")
+    cat("  - Outlier (Z-score > 3):", length(outliers_z), "\n")
+    cat("  - Uji Grubbs:", grubbs_outlier, "\n")
+    cat("  - Batas bawah:", round(lower_bound, 2), "\n")
+    cat("  - Batas atas:", round(upper_bound, 2), "\n")
+    
+    if(length(outliers_iqr) > 0) {
+      cat("  - Nilai outlier:", paste(head(unique(round(outliers_iqr, 2)), 5), collapse = ", "), "\n")
+    }
+    cat("\n")
+  }
+  
+  return(outlier_report)
+}
+
+# Deteksi outlier
+outlier_analysis <- detect_outliers(data)
+
+# =========================================
+# DETEKSI INCONSISTENCY
+# =========================================
+
+cat("=== CEK INCONSISTENCY ===\n")
+
+# 1. Nilai tidak logis
+cat("\nCA125 negatif:", sum(df$CA125_U_per_mL < 0, na.rm=TRUE))
+cat("\nSurvival negatif:", sum(df$Overall_Survival_Months < 0, na.rm=TRUE))
+
+# 2. Range tidak wajar
+cat("\nCA125 terlalu besar (>5000):", 
+    sum(df$CA125_U_per_mL > 5000, na.rm=TRUE))
+
+# 3. Cek kategori tidak konsisten
+unique(df$Survival_Status)
+
+# 4. Cek duplikasi
+duplicated_rows <- sum(duplicated(df))
+cat("\nJumlah duplikasi:", duplicated_rows)
+
+df_clean <- na.omit(df)
+summary(data)
+
+#Histogram distribusi CA-125
+ggplot(df_clean, aes(x = CA125_U_per_mL)) +
+  geom_histogram(bins = 30) +
+  labs(
+    title = "Distribusi CA-125",
+    x = "CA-125 (U/mL)",
+    y = "Frekuensi"
+  ) +
+  theme_minimal()
+
+#Histogram Overall Survival
+ggplot(df_clean, aes(x = Overall_Survival_Months)) +
+  geom_histogram(bins = 30) +
+  labs(
+    title = "Distribusi Overall Survival",
+    x = "Overall Survival (Months)",
+    y = "Frekuensi"
+  ) +
+  theme_minimal()
+
+#Boxplot untuk deteksi outlier visual CA-125
+ggplot(df_clean, aes(y = CA125_U_per_mL)) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot CA-125",
+    y = "CA-125 (U/mL)"
+  ) +
+  theme_minimal()
+
+#Boxplot untuk deteksi outlier visual Survival
+ggplot(df_clean, aes(y = Overall_Survival_Months)) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot Overall Survival",
+    y = "Overall Survival (Months)"
+  ) +
+  theme_minimal()
+
+#Scatter plot hubungan
+ggplot(df_clean, aes(x = CA125_U_per_mL,
+                     y = Overall_Survival_Months)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Hubungan CA-125 vs Overall Survival",
+    x = "CA-125 (U/mL)",
+    y = "Overall Survival (Months)"
+  ) +
+  theme_minimal()
+
+# =========================================
+# KORELASI PEARSON + INTERPRETASI
+# =========================================
+
+# Pilih variabel
+variabel_x <- df_clean$CA125_U_per_mL
+variabel_y <- df_clean$Overall_Survival_Months
+
+# Hitung korelasi Pearson
+hasil <- cor.test(variabel_x, variabel_y, method = "pearson")
+
+korelasi_pearson <- hasil$estimate
+p_value <- hasil$p.value
+
+cat(sprintf("\nKorelasi Pearson: %.3f\n", korelasi_pearson))
+
+# =========================================
+# Interpretasi kekuatan korelasi
+# =========================================
+
+if (korelasi_pearson > 0.8) {
+  interpretasi <- "Korelasi sangat kuat positif"
+} else if (korelasi_pearson > 0.6) {
+  interpretasi <- "Korelasi kuat positif"
+} else if (korelasi_pearson > 0.4) {
+  interpretasi <- "Korelasi sedang positif"
+} else if (korelasi_pearson > 0.2) {
+  interpretasi <- "Korelasi lemah positif"
+} else if (korelasi_pearson > 0) {
+  interpretasi <- "Korelasi sangat lemah positif"
+} else if (korelasi_pearson < -0.8) {
+  interpretasi <- "Korelasi sangat kuat negatif"
+} else if (korelasi_pearson < -0.6) {
+  interpretasi <- "Korelasi kuat negatif"
+} else if (korelasi_pearson < -0.4) {
+  interpretasi <- "Korelasi sedang negatif"
+} else if (korelasi_pearson < -0.2) {
+  interpretasi <- "Korelasi lemah negatif"
+} else if (korelasi_pearson < 0) {
+  interpretasi <- "Korelasi sangat lemah negatif"
+} else {
+  interpretasi <- "Tidak ada korelasi linier"
+}
+
+cat("Interpretasi:", interpretasi, "\n")
+
+# =========================================
+# Uji hipotesis
+# =========================================
+
+alpha <- 0.05
+
+cat(sprintf("P-value: %.3f\n", p_value))
+cat(sprintf("Tingkat Signifikansi (alpha): %.2f\n", alpha))
+
+if (p_value < alpha) {
+  keputusan <- "Tolak Hipotesis Nol (H0)"
+  interpretasi_uji <- paste(
+    "Ada bukti statistik yang cukup untuk menyimpulkan",
+    "adanya hubungan linier yang signifikan antara variabel."
+  )
+} else {
+  keputusan <- "Gagal Menolak Hipotesis Nol (H0)"
+  interpretasi_uji <- paste(
+    "Tidak ada bukti statistik yang cukup untuk menyimpulkan",
+    "adanya hubungan linier yang signifikan antara variabel."
+  )
+}
+
+cat("\nKeputusan:", keputusan, "\n")
+cat("Interpretasi Uji:", interpretasi_uji, "\n")
+``` 
+```
+
